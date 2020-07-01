@@ -1,0 +1,9 @@
+MFCC_test
+MFCC_train
+all_train_data.npy
+all_test_data.npy
+all_train_label.npy
+all_test_label.npy
+.vscode
+data
+model
