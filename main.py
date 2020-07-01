@@ -135,7 +135,7 @@ class Mymodel():
         self.model.summary()
         
 
-    def train(self,train_data,train_label):
+    def train(self,train_data,train_label,model_name = None):
 
         def scheduler(epoch,lr):
             if epoch <5:
@@ -182,7 +182,7 @@ class Mymodel():
         selected_layers = ['conv2d', 'conv2d_1', 'conv2d_2', 'conv2d_3']
         activations,feature_extractor = self.get_activation(selected_layers,target_data)
         layer_index = self.APOZ(activations)
-        self.replace_layer(selected_layers,layer_index,feature_extractor)
+        prune_model = self.replace_layer(selected_layers,layer_index,feature_extractor)
 
 
     def get_activation(self,selected_layers,target_data):
@@ -219,33 +219,50 @@ class Mymodel():
     def replace_layer(self,selected_layers,layer_index,feature_extractor):
         #1)先遍历原模型，把conv曾按照apoz结果设置通
         new_model = keras.Sequential()
-        for layer in self.model.layers[:len(self.model.layers)-2]:
+        for layer in self.model.layers[:len(self.model.layers)-1]:
             if layer.name in selected_layers:
                 index = selected_layers.index(layer.name)
                 channels = layer_index[index]
                 channels = np.array(channels)
                 num_channels = channels.sum()
-                new_layer = keras.layers.Conv2D(num_channels, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')
-                # new_layer.weights[0].load_weight(new_weights)
-                # new_layer.weights[1].load_weight(new_bias)
+                new_layer = keras.layers.Conv2D(
+                    num_channels, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')
                 new_model.add(new_layer)
             else:
                 new_model.add(layer)
-
-        print("new_model: {}".format([layer.name for layer in new_model.layers]))
+            new_conv_layer = [layer.name for layer in new_model.layers if layer.name.startswith('conv') ]
+        print("new_model: {}".format(new_conv_layer)) 
+        print("new_model_all: {}".format([layer.name for layer in new_model.layer]))
+        
 
         #2)然后再根据apoz结果得到想要的weight，在进行权重初始化
         #得到一层中index为1的layer
         old_weights = [self.model.get_layer(name).weights for name in selected_layers ]
-        new_weights = old_weights[layer_index == 1]
-        #replace layer
-        layer = self.model.get_layer(selected_layers[3])
-        layer = layers.Conv2D(64, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')
-        # for i,name in enumerate(selected_layers):
-        #     layer = self.model.get_layer(name)
-        #     old_weight = layer.weights
-        #     new_weight = old_weight[layer_index[i] == 1]
-        #     newlayer =layers.Conv2D(64, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')
+        for i,name in enumerate(selected_layers):
+            ###更新当前layer的权值
+            current_layer = new_model.get_layer(new_conv_layer[i])
+            current_old_weights = old_weights[i][0]
+            bias = old_weights[i][1]
+            current_old_weights = tf.transpose(current_old_weights,perm = [3,0,1,2])
+            index = np.array(layer_index[i])
+            new_weights = current_old_weights[index == 1]
+            new_weights = tf.transpose(new_weights,perm = [1,2,3,0])
+            bias = bias[index == 1]
+            current_layer.weights[0].assign(new_weights)
+            current_layer.weights[1].assign(bias)
+            ###如果有下一个 conv layer, 也进行剪裁
+            if i < len(new_conv_layer)-1:
+                next_layer = new_model.get_layer(new_conv_layer[i+1])
+                next_weights = tf.transpose(old_weights[i+1][0],perm = [2,0,1,3])
+                next_weights = next_weights[index == 1]
+                next_weights = tf.transpose(new_weights,perm =[1,2,0,3] )
+        
+        return new_model
+        
+    def retrain_model():
+        #先增加全连接层，然后根据输入的数据进行retrain
+        
+
 
 
 def convert2tflite(model,data):
