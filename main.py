@@ -71,7 +71,7 @@ def load(data_path,folder,num_of_unknown):
         for line in f:
             path = line.split(' ')[0]
             data = np.load(folder+path)
-            label = line .split(' ')[1].strip('/n')
+            label = line.split(' ')[1].strip('/n')
             label = int(label)
             if label == 0 :
                 if count<num_of_unknown:
@@ -164,13 +164,15 @@ class Mymodel():
         convert2tflite(self.model,train_data[:10])
 
 
-    def test(self,test_data,test_label):
+    def test(self,test_data,test_label, test_model = None):
+        if test_model == None:
+            test_model = self.model
         for i in range(10):
             print("size of {} is {}.Test accuracy are as follow".format(classes[i],test_data[test_label==i].shape[0]))
-            res = self.model.evaluate(test_data[test_label==i],test_label[test_label==i])
+            res = test_model.evaluate(test_data[test_label==i],test_label[test_label==i])
         print("all Test accuracy are as follow")
         res = self.model.evaluate(test_data,test_label)
-    
+
 
     def get_weights(self):
         weights = self.model.weights
@@ -191,7 +193,7 @@ class Mymodel():
         weights = [self.model.get_layer(name).weights for name in selected_layers ]
         outputs = [self.model.get_layer(name).output for name in selected_layers]
         feature_extractor = keras.Model(self.model.inputs,outputs)
-        ###可再加个activation selection的或称####
+        ###可再加个activation selection的功能####
 
         ########################################
         activations = feature_extractor(target_data)
@@ -232,7 +234,7 @@ class Mymodel():
                 new_model.add(layer)
             new_conv_layer = [layer.name for layer in new_model.layers if layer.name.startswith('conv') ]
         print("new_model: {}".format(new_conv_layer)) 
-        print("new_model_all: {}".format([layer.name for layer in new_model.layer]))
+        print("new_model_all: {}".format([layer.name for layer in new_model.layers]))
         
 
         #2)然后再根据apoz结果得到想要的weight，在进行权重初始化
@@ -255,13 +257,20 @@ class Mymodel():
                 next_layer = new_model.get_layer(new_conv_layer[i+1])
                 next_weights = tf.transpose(old_weights[i+1][0],perm = [2,0,1,3])
                 next_weights = next_weights[index == 1]
-                next_weights = tf.transpose(new_weights,perm =[1,2,0,3] )
-        
+                next_weights = tf.transpose(next_weights,perm =[1,2,0,3])
+                old_weights[i+1][0] = next_weights
+            
+
         return new_model
         
-    def retrain_model():
+    def retrain_model(model,):         
         #先增加全连接层，然后根据输入的数据进行retrain
+        new_model.add(self.model.get_layer('dense'))
+
         
+        fully_connected = layers.Dense(11,activation = "softmax")
+        
+        pass
 
 
 
@@ -314,10 +323,11 @@ if __name__ == "__main__":
         model.train(train_data,train_label)
         model.info()
 
-    model.test(test_data,test_label)
+    #model.test(test_data,test_label)
     test_tflite(train_data[:10])
     #model.get_weights()
-    activations = model.prune(test_data[test_label == 4])
+    new_model = model.prune(test_data[test_label == 4])
+    
     #activations = model.get_activations(train_data[:10])
     #print(len(activations))
     #tf.print(activations)
