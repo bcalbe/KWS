@@ -171,7 +171,7 @@ class Mymodel():
             print("size of {} is {}.Test accuracy are as follow".format(classes[i],test_data[test_label==i].shape[0]))
             res = test_model.evaluate(test_data[test_label==i],test_label[test_label==i])
         print("all Test accuracy are as follow")
-        res = self.model.evaluate(test_data,test_label)
+        res = test_model.evaluate(test_data,test_label)
 
 
     def get_weights(self):
@@ -260,17 +260,21 @@ class Mymodel():
                 next_weights = tf.transpose(next_weights,perm =[1,2,0,3])
                 old_weights[i+1][0] = next_weights
             
-
-        return new_model
+        self.new_model = new_model
         
-    def retrain_model(model,):         
+    def retrain_model(self,train_data,train_label,test_data,test_label, istest = False):         
         #先增加全连接层，然后根据输入的数据进行retrain
-        new_model.add(self.model.get_layer('dense'))
+        if istest == True:
+            self.new_model.add(self.model.get_layer('dense'))
+            self.test(test_data = test_data,test_label=test_label,test_model = self.new_model)
+            self.new_model.pop(self.new_model.get_layer('dense'))        
+        fully_connected = layers.Dense(1,activation = "softmax")
+        #obtain retraining data
+        ##positive samples
+        
+        
+        #retrain process
 
-        
-        fully_connected = layers.Dense(11,activation = "softmax")
-        
-        pass
 
 
 
@@ -315,19 +319,21 @@ if __name__ == "__main__":
     print("load time is {}".format(time2-time1))
     isload_model = True
     if isload_model is True:
-        model = Mymodel()
-        model.model = tf.keras.models.load_model(save_dir+'original_model.h5'.format(index))
-        convert2tflite(model.model,train_data[:10])
+        Prune_model = Mymodel()
+        Prune_model.model = tf.keras.models.load_model(save_dir+'original_model.h5'.format(index))
+        convert2tflite(Prune_model.model,train_data[:10])
     else:
-        model = Mymodel()
-        model.train(train_data,train_label)
-        model.info()
+        Prune_model = Mymodel()
+        Prune_model.train(train_data,train_label)
+        Prune_model.info()
 
-    #model.test(test_data,test_label)
     test_tflite(train_data[:10])
     #model.get_weights()
-    new_model = model.prune(test_data[test_label == 4])
-    
+    Prune_model.prune(test_data[test_label == 4])
+    #Prune_model.tests(test_data,test_label)
+    Prune_model.retrain_model(train_data = train_data,train_label = train_label,
+                                test_data=test_data,test_label= test_label)
+
     #activations = model.get_activations(train_data[:10])
     #print(len(activations))
     #tf.print(activations)
