@@ -116,11 +116,11 @@ class Mymodel():
     def get_model(self,name):
         if name is "functional":
             inputs = keras.Input(shape = self.input_shape)
-            x1 = layers.Conv2D(4, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')(inputs)
-            x2 = layers.Conv2D(4, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')(x1)
+            x1 = layers.Conv2D(16, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')(inputs)
+            x2 = layers.Conv2D(16, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')(x1)
             x = layers.MaxPooling2D(pool_size=(2, 2))(x2)
-            x3 = layers.Conv2D(8, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')(x)
-            x4 = layers.Conv2D(4, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')(x3)
+            x3 = layers.Conv2D(32, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')(x)
+            x4 = layers.Conv2D(32, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')(x3)
             x = layers.MaxPooling2D(pool_size=(2, 2))(x4)
             x = layers.Flatten()(x)
             prediction = layers.Dense(11,activation = "softmax")(x)
@@ -135,7 +135,7 @@ class Mymodel():
         self.model.summary()
         
 
-    def train(self,train_data,train_label,model_name = None):
+    def train(self,train_data,train_label,model_name = "original_model.h5",model = None):
 
         def scheduler(epoch,lr):
             if epoch <5:
@@ -144,24 +144,24 @@ class Mymodel():
                 return lr/10
             else:
                 return lr/1000 
-
+        if model == None :
+            model = self.model
         callback = [tf.keras.callbacks.LearningRateScheduler(scheduler),tf.keras.callbacks.EarlyStopping(monitor = 'val_loss',min_delta = 1e-2,patience = 2, verbose = 1)]
-        self.model.compile(optimizer=keras.optimizers.Adam(learning_rate = 1e-4),
+        model.compile(optimizer=keras.optimizers.Adam(learning_rate = 1e-3),
         #loss=keras.losses.CategoricalCrossentropy(),  # 需要使用to_categorical
         loss='sparse_categorical_crossentropy',
         metrics=['accuracy'])
-        history = self.model.fit(train_data,train_label,batch_size = 16,epochs = 10,callbacks = callback,validation_split = 0.1)
+        history = model.fit(train_data,train_label,batch_size = 16,epochs = 10,callbacks = callback,validation_split = 0.1)
  
         #save model
-        model_name = "original_model.h5"
         if not os.path.isdir(save_dir):
             os.mkdir(save_dir)
         try:
-            self.model.save(save_dir+model_name)
+            model.save(save_dir+model_name)
         except:
             model_name = "original_model"
-            self.model.save_weights(save_dir + model_name,save_format = 'tf')
-        convert2tflite(self.model,train_data[:10])
+            model.save_weights(save_dir + model_name,save_format = 'tf')
+        convert2tflite(model,train_data[:10])
 
 
     def test(self,test_data,test_label, test_model = None):
@@ -259,7 +259,6 @@ class Mymodel():
                 next_weights = next_weights[index == 1]
                 next_weights = tf.transpose(next_weights,perm =[1,2,0,3])
                 old_weights[i+1][0] = next_weights
-            
         self.new_model = new_model
         
     def retrain_model(self,train_data,train_label,test_data,test_label, istest = False):         
@@ -269,12 +268,33 @@ class Mymodel():
             self.test(test_data = test_data,test_label=test_label,test_model = self.new_model)
             self.new_model.pop(self.new_model.get_layer('dense'))        
         fully_connected = layers.Dense(1,activation = "softmax")
-        #obtain retraining data
-        ##positive samples
-        
-        
-        #retrain process
+        self.new_model.add(fully_connected)
+        #obtain positive retraining data
+        retrain_data = np.zeros(shape = (0,40,44,1))
+        retrain_label = np.zeros(shape = (0))
+        target_class = classes_to_idx['cat']
 
+        
+        positive_data = train_data[train_label == target_class]
+        positive_length = int(len(train_label[train_label == target_class]))
+        positive_label = np.ones(shape = (positive_length))
+        retrain_data = np.concatenate((retrain_data,positive_data),axis=0)
+        retrain_label = np.concatenate((retrain_label,positive_label),axis=0)
+
+        ##negative_sample
+        for i in range(len(classes)):
+            if i == target_class:
+                pass
+            else:
+                negative_data = train_data[train_label == i] 
+                negative_data = negative_data[:positive_length]
+                retrain_data = np.concatenate((retrain_data,negative_data),axis=0)
+                negative_label = train_label[train_label == i]
+                negative_label = train_label[:positive_length]
+                retrain_label = np.concatenate((retrain_label,negative_label),axis=0)
+        #retrain process
+        self.train(retrain_data,retrain_label,model_name='retrain_model.h5',model=self.retrain_model)
+        
 
 
 
@@ -317,7 +337,7 @@ if __name__ == "__main__":
     train_data, train_label,test_data, test_label = load_data(data_path = data_path )
     time2 = time.time()
     print("load time is {}".format(time2-time1))
-    isload_model = True
+    isload_model = False
     if isload_model is True:
         Prune_model = Mymodel()
         Prune_model.model = tf.keras.models.load_model(save_dir+'original_model.h5'.format(index))
