@@ -219,9 +219,12 @@ class Mymodel():
                 
 
     def replace_layer(self,selected_layers,layer_index,feature_extractor):
-        #1)先遍历原模型，把conv曾按照apoz结果设置通
+    # network_structure = ['input','conv','conv','pool','conv',''conv,'pool','flatten','dense']
+
+
+        #1)先遍历原模型，把conv曾按照apoz结果设置
         new_model = keras.Sequential()
-        for layer in self.model.layers[:len(self.model.layers)-1]:
+        for layer in self.model.layers[:len(self.model.layers)-1]:#改为 in network_structure
             if layer.name in selected_layers:
                 index = selected_layers.index(layer.name)
                 channels = layer_index[index]
@@ -229,10 +232,10 @@ class Mymodel():
                 num_channels = channels.sum()
                 new_layer = keras.layers.Conv2D(
                     num_channels, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')
-                new_model.add(new_layer)
-            else:
+                new_model.add(new_layer) 
+            else:#改为 pool flatten 和dense分情况设置而不是直接copy元模型
                 new_model.add(layer)
-            new_conv_layer = [layer.name for layer in new_model.layers if layer.name.startswith('conv') ]
+        new_conv_layer = [layer.name for layer in new_model.layers if layer.name.startswith('conv') ]
         print("new_model: {}".format(new_conv_layer)) 
         print("new_model_all: {}".format([layer.name for layer in new_model.layers]))
         
