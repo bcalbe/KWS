@@ -13,6 +13,7 @@ classes_to_idx = {classes[i]:i for i in range(len(classes))}
 index = "16_32kernel_prune"
 save_dir = "./model/{}/".format(index)
 data_path = "./data/"
+#config.gpu_options.allow_growth = True
 
 
 def load_data(data_path):
@@ -146,7 +147,7 @@ class Mymodel():
                 return lr/1000 
         if model == None :
             model = self.model
-        callback = [tf.keras.callbacks.LearningRateScheduler(scheduler),tf.keras.callbacks.EarlyStopping(monitor = 'val_loss',min_delta = 1e-2,patience = 2, verbose = 1)]
+        callback = [tf.keras.callbacks.LearningRateScheduler(scheduler),tf.keras.callbacks.EarlyStopping(monitor = 'val_loss',min_delta = 1e-2,patience = 1, verbose = 1)]
         model.compile(optimizer=keras.optimizers.Adam(learning_rate = 1e-3),
         #loss=keras.losses.CategoricalCrossentropy(),  # 需要使用to_categorical
         loss='sparse_categorical_crossentropy',
@@ -181,7 +182,8 @@ class Mymodel():
 
 
     def prune(self, target_data):
-        selected_layers = ['conv2d', 'conv2d_1', 'conv2d_2', 'conv2d_3']
+        #selected_layers = ['conv2d', 'conv2d_1', 'conv2d_2', 'conv2d_3']
+        selected_layers = [layer.name for layer in self.model.layers if layer.name.startswith('conv') ]
         activations,feature_extractor = self.get_activation(selected_layers,target_data)
         layer_index = self.APOZ(activations)
         prune_model = self.replace_layer(selected_layers,layer_index,feature_extractor)
@@ -205,12 +207,14 @@ class Mymodel():
         layers_indexs = []
         for activation in activations:
             indexs = []
+            
             activation = tf.transpose(activation, perm = [3,0,1,2])
+            shape = activation.shape[0]
             for _,features in enumerate(activation):
                 size = tf.size(features).numpy()
                 num_zeros = tf.size(features[features == 0]).numpy()
                 APOZ = 100 * num_zeros/size
-                if APOZ > threshold:
+                if (APOZ > threshold) & (indexs.count(0) < activation.shape[0]-1):
                     indexs.append(0)
                 else:
                     indexs.append(1)
@@ -220,26 +224,32 @@ class Mymodel():
 
     def replace_layer(self,selected_layers,layer_index,feature_extractor):
     # network_structure = ['input','conv','conv','pool','conv',''conv,'pool','flatten','dense']
-
+        layers_name = [layer.name for layer in self.model.layers]
 
         #1)先遍历原模型，把conv曾按照apoz结果设置
         new_model = keras.Sequential()
-        for layer in self.model.layers[:len(self.model.layers)-1]:#改为 in network_structure
-            if layer.name in selected_layers:
-                index = selected_layers.index(layer.name)
+        #for layer in self.model.layers[:len(self.model.layers)-1]:#改为 in network_structure
+        for name in layers_name:
+            if name.startswith('input'):
+                new_model.add(self.model.get_layer(name))
+            elif name.startswith('conv'):
+                index = selected_layers.index(name)
                 channels = layer_index[index]
                 channels = np.array(channels)
                 num_channels = channels.sum()
                 new_layer = keras.layers.Conv2D(
                     num_channels, kernel_size=(3, 3), activation="relu",strides = (1,1),padding = 'same')
                 new_model.add(new_layer) 
-            else:#改为 pool flatten 和dense分情况设置而不是直接copy元模型
-                new_model.add(layer)
+            elif name.startswith('max'):#改为 pool flatten 和dense分情况设置而不是直接copy元模型
+                new_model.add(layers.MaxPooling2D(pool_size=(2, 2)))
+            elif name.startswith('flatten'):
+                new_model.add(layers.Flatten())
+            elif name.startswith('dense'):
+                new_model.add(layers.Dense(1,activation = "softmax"))
         new_conv_layer = [layer.name for layer in new_model.layers if layer.name.startswith('conv') ]
         print("new_model: {}".format(new_conv_layer)) 
         print("new_model_all: {}".format([layer.name for layer in new_model.layers]))
         
-
         #2)然后再根据apoz结果得到想要的weight，在进行权重初始化
         #得到一层中index为1的layer
         old_weights = [self.model.get_layer(name).weights for name in selected_layers ]
@@ -266,12 +276,12 @@ class Mymodel():
         
     def retrain_model(self,train_data,train_label,test_data,test_label, istest = False):         
         #先增加全连接层，然后根据输入的数据进行retrain
-        if istest == True:
-            self.new_model.add(self.model.get_layer('dense'))
-            self.test(test_data = test_data,test_label=test_label,test_model = self.new_model)
-            self.new_model.pop(self.new_model.get_layer('dense'))        
-        fully_connected = layers.Dense(1,activation = "softmax")
-        self.new_model.add(fully_connected)
+        # if istest == True:
+        #     self.new_model.add(self.model.get_layer('dense'))
+        #     self.test(test_data = test_data,test_label=test_label,test_model = self.new_model)
+        #     self.new_model.pop(self.new_model.get_layer('dense'))        
+        # fully_connected = layers.Dense(1,activation = "softmax")
+        # self.new_model.add(fully_connected)
         #obtain positive retraining data
         retrain_data = np.zeros(shape = (0,40,44,1))
         retrain_label = np.zeros(shape = (0))
@@ -290,16 +300,14 @@ class Mymodel():
                 pass
             else:
                 negative_data = train_data[train_label == i] 
-                negative_data = negative_data[:positive_length]
+                negative_data = negative_data[:int(positive_length/10)]
                 retrain_data = np.concatenate((retrain_data,negative_data),axis=0)
                 negative_label = train_label[train_label == i]
-                negative_label = train_label[:positive_length]
+                negative_label = train_label[:int(positive_length/10)]
                 retrain_label = np.concatenate((retrain_label,negative_label),axis=0)
         #retrain process
-        self.train(retrain_data,retrain_label,model_name='retrain_model.h5',model=self.retrain_model)
+        self.train(retrain_data,retrain_label,model_name='retrain_model.h5',model=self.new_model)
         
-
-
 
 def convert2tflite(model,data):
     model_name = "origin_model.tflite"
@@ -343,7 +351,7 @@ if __name__ == "__main__":
     isload_model = False
     if isload_model is True:
         Prune_model = Mymodel()
-        Prune_model.model = tf.keras.models.load_model(save_dir+'original_model.h5'.format(index))
+        Prune_model.model = tf.keras.models.load_model(save_dir+'original_model.h5')
         convert2tflite(Prune_model.model,train_data[:10])
     else:
         Prune_model = Mymodel()
@@ -352,11 +360,10 @@ if __name__ == "__main__":
 
     test_tflite(train_data[:10])
     #model.get_weights()
-    Prune_model.prune(test_data[test_label == 4])
-    #Prune_model.tests(test_data,test_label)
+    Prune_model.test(test_data,test_label)
+    Prune_model.prune(test_data[test_label == classes_to_idx['cat']] )
     Prune_model.retrain_model(train_data = train_data,train_label = train_label,
                                 test_data=test_data,test_label= test_label)
-
     #activations = model.get_activations(train_data[:10])
     #print(len(activations))
     #tf.print(activations)
